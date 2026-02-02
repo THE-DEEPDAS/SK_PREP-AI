@@ -1,190 +1,242 @@
-
-# ============================================
-# BACKEND: Mains Answer Evaluator API
-# File: backend/app/routers/answer_evaluator.py
-# ============================================
-
-from fastapi import APIRouter, UploadFile, File, Form
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional
-import openai
-import os
-import base64
-from app.services.keyword_services import extract_keywords, keyword_score
+from typing import Optional, List
+import os, json, re, requests, io
+
+from PIL import Image, ImageFile
+import pytesseract
+import fitz
+
+router = APIRouter(
+    prefix="/api/evaluator",
+    tags=["evaluator"]
+)
 
 
-router = APIRouter()
+# ================= REQUEST MODEL =================
+
+class EvaluateRequest(BaseModel):
+    question: Optional[str]
+    answer_text: str
+    difficulty: str
+    paper: str
+    marks: int
+
+
+# ================= RESPONSE MODELS =================
+
+class SectionScores(BaseModel):
+    introduction: float
+    body: float
+    conclusion: float
+    presentation: float
+
 
 class AnswerEvaluation(BaseModel):
-    overall_score: float  # Out of 10
-    content_score: float
-    structure_score: float
-    language_score: float
-    keyword_coverage: float
+    final_score: float
+    section_scores: SectionScores
     strengths: List[str]
     weaknesses: List[str]
     suggestions: List[str]
-    model_answer: str
     detailed_feedback: str
 
-class EvaluateRequest(BaseModel):
-    question: Optional[str] = None
-    answer_text: Optional[str] = None
-    difficulty: str = "hard"  # easy or hard
 
-@router.post("/evaluate-text", response_model=AnswerEvaluation)
+# ================= OCR =================
+
+async def extract_text(file: UploadFile):
+
+    data = await file.read()
+    content_type = file.content_type or ""
+
+    extracted_text = ""
+
+    # -------- PDF --------
+
+    if content_type == "application/pdf":
+
+        try:
+            pdf = fitz.open(stream=data, filetype="pdf")
+        except:
+            raise HTTPException(400, "Invalid PDF")
+
+        for page in pdf:
+            extracted_text += page.get_text()
+
+    # -------- IMAGE --------
+
+    elif content_type.startswith("image"):
+
+        try:
+            ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+            image = Image.open(io.BytesIO(data))
+            image = image.convert("RGB")
+
+            # Resize large scans
+            if image.width > 2000:
+                ratio = 2000 / image.width
+                image = image.resize((2000, int(image.height * ratio)))
+
+            image = image.convert("L")
+
+            # Improve contrast
+            image = image.point(lambda x: 0 if x < 140 else 255)
+
+            extracted_text = pytesseract.image_to_string(
+                image,
+                config="--psm 6"
+            )
+
+        except Exception as e:
+            print("OCR ERROR:", e)
+            extracted_text = ""
+
+    else:
+        raise HTTPException(400, "Unsupported file type")
+
+    return extracted_text
+
+
+# ================= CORE EVALUATOR =================
+
 async def evaluate_text_answer(request: EvaluateRequest):
-    """Evaluate text answer"""
-    
-    try:
-        # Use OpenAI or Mistral to evaluate
-        prompt = f"""You are a UPSC Mains answer evaluator. Evaluate this answer critically.
 
-Question: {request.question or 'General Mains Answer'}
+    strictness = "very strict" if request.difficulty == "hard" else "moderate"
 
-Student's Answer:
+    prompt = f"""
+You are a UPSC Mains examiner.
+
+Paper: {request.paper}
+Maximum Marks: {request.marks}
+
+Question:
+{request.question}
+
+Student Answer:
 {request.answer_text}
 
-Evaluation Criteria:
-1. Content Quality (0-10): Depth, accuracy, relevance
-2. Structure (0-10): Introduction, body, conclusion
-3. Language (0-10): Grammar, clarity, expression
-4. Keyword Coverage (0-10): Important terms and concepts
+Evaluate strictly like real UPSC checking.
 
-Provide evaluation in this JSON format:
+Return STRICT JSON ONLY:
+
 {{
-    "overall_score": float (0-10),
-    "content_score": float (0-10),
-    "structure_score": float (0-10),
-    "language_score": float (0-10),
-    "keyword_coverage": float (0-10),
-    "strengths": ["strength 1", "strength 2", "strength 3"],
-    "weaknesses": ["weakness 1", "weakness 2", "weakness 3"],
-    "suggestions": ["suggestion 1", "suggestion 2", "suggestion 3"],
-    "model_answer": "An ideal answer would be...",
-    "detailed_feedback": "Detailed paragraph explaining the evaluation"
+"final_score": float,
+"section_scores": {{
+    "introduction": float,
+    "body": float,
+    "conclusion": float,
+    "presentation": float
+}},
+"strengths": [],
+"weaknesses": [],
+"suggestions": [],
+"detailed_feedback": ""
 }}
 
-Be {'very strict and critical' if request.difficulty == 'hard' else 'moderate and encouraging'} in your evaluation.
+Rules:
+- Section total must sum to final_score
+- final_score must be <= {request.marks}
+- Be {strictness}
 """
 
-        # Call LLM (using OpenAI or Ollama)
-        if os.getenv("USE_OPENAI", "false").lower() == "true":
-            response = openai.ChatCompletion.create(
+    try:
+
+        # -------- LLM --------
+
+        if os.getenv("USE_OPENAI") == "true":
+
+            import openai
+
+            res = openai.ChatCompletion.create(
                 model="gpt-4-turbo-preview",
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.7,
-                max_tokens=2000
+                temperature=0.3
             )
-            result_text = response.choices[0].message.content
+
+            result_text = res.choices[0].message.content
+
         else:
-            # Use Ollama/Mistral
-            import requests
-            ollama_response = requests.post(
+
+            res = requests.post(
                 "http://localhost:11434/api/generate",
                 json={
-                    "model": "upsc-mistral",
+                    "model": "mistral",
                     "prompt": prompt,
                     "stream": False
                 },
                 timeout=120
             )
-            result_text = ollama_response.json().get('response', '')
-        
-        # Parse JSON response
-        import json
-        import re
-        
-        # Extract JSON from response
-        json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
-        if json_match:
-            evaluation = json.loads(json_match.group())
-            return AnswerEvaluation(**evaluation)
-        else:
-            # Fallback evaluation
+
+            result_text = res.json().get("response", "")
+
+        # -------- JSON SAFE PARSE --------
+
+        match = re.search(r"\{.*\}", result_text, re.DOTALL)
+
+        if not match:
+            print("LLM RAW RESPONSE:", result_text)
+
+            # fallback safe response
             return AnswerEvaluation(
-                overall_score=7.0,
-                content_score=7.0,
-                structure_score=7.0,
-                language_score=7.0,
-                keyword_coverage=6.5,
-                strengths=["Good attempt", "Clear writing"],
-                weaknesses=["Could be more detailed"],
-                suggestions=["Add more examples", "Improve conclusion"],
-                model_answer="An ideal answer would cover...",
-                detailed_feedback="Your answer shows understanding but needs improvement in depth."
+                final_score=0,
+                section_scores={
+                    "introduction": 0,
+                    "body": 0,
+                    "conclusion": 0,
+                    "presentation": 0
+                },
+                strengths=["Answer detected"],
+                weaknesses=["AI could not parse evaluation"],
+                suggestions=["Retry evaluation"],
+                detailed_feedback="Evaluation parsing failed"
             )
-            
+
+        data = json.loads(match.group())
+
+        # Safety clamp
+        data["final_score"] = min(float(data["final_score"]), request.marks)
+
+        return AnswerEvaluation(**data)
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/evaluate-image", response_model=AnswerEvaluation)
-async def evaluate_image_answer(
-    answer_images: List[UploadFile] = File(...),
-    question: Optional[str] = Form(None),
-    difficulty: str = Form("hard")
-):
-    """Evaluate answer from uploaded images (OCR + Evaluation)"""
-    
-    try:
-        # Step 1: OCR to extract text from images
-        from PIL import Image
-        import pytesseract
-        import io
-        
-        extracted_text = ""
-        
-        for image_file in answer_images:
-            # Read image
-            image_data = await image_file.read()
-            image = Image.open(io.BytesIO(image_data))
-            
-            # OCR
-            text = pytesseract.image_to_string(image, lang='eng')
-            extracted_text += text + "\n\n"
-        
-        # Step 2: Evaluate the extracted text
-        request = EvaluateRequest(
-            question=question,
-            answer_text=extracted_text,
-            difficulty=difficulty
-        )
-        
-        return await evaluate_text_answer(request)
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing images: {str(e)}")
 
-@router.post("/compare-answers")
-async def compare_multiple_answers(
-    answers: List[str],
-    question: str
+# ================= MAIN API =================
+
+@router.post("/evaluate-upload", response_model=AnswerEvaluation)
+async def evaluate_upload(
+    files: List[UploadFile] = File(...),
+    question: Optional[str] = Form(None),
+    difficulty: str = Form("hard"),
+    paper: str = Form(...),
+    marks: str = Form(...)  # <-- FIX: accept as string
 ):
-    """Compare multiple answers to the same question"""
-    
-    evaluations = []
-    
-    for idx, answer in enumerate(answers):
-        request = EvaluateRequest(
-            question=question,
-            answer_text=answer,
-            difficulty="hard"
-        )
-        evaluation = await evaluate_text_answer(request)
-        evaluations.append({
-            "answer_number": idx + 1,
-            "evaluation": evaluation
-        })
-    
-    # Rank by score
-    evaluations.sort(key=lambda x: x["evaluation"].overall_score, reverse=True)
-     keywords = extract_keywords(req.question)
-    
-    coverage = keyword_score(req.user_answer, keywords)
-    
-    return {
-        "total_answers": len(answers),
-        "evaluations": evaluations,
-        "best_answer": evaluations[0] if evaluations else None
-    }
-   
+
+    # SAFE CAST
+    try:
+        marks = int(marks)
+    except:
+        raise HTTPException(400, "Invalid marks value")
+
+    full_text = ""
+
+    for file in files:
+        text = await extract_text(file)
+        full_text += text + "\n"
+
+    # OCR fallback (DO NOT FAIL)
+    if not full_text.strip():
+        full_text = "Handwritten answer detected. Partial OCR extraction."
+
+    request = EvaluateRequest(
+        question=question,
+        answer_text=full_text,
+        difficulty=difficulty,
+        paper=paper,
+        marks=marks
+    )
+
+    result = await evaluate_text_answer(request)
+
+    return result

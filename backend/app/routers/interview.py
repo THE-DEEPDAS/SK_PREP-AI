@@ -2,7 +2,7 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
-import openai
+
 import os
 import tempfile
 import json
