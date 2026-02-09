@@ -1,0 +1,23 @@
+{
+  "total_questions": 415,
+  "by_exam_type": {
+    "prelims": 355,
+    "mains": 60
+  },
+  "by_paper_type": {
+    "prelims_gs": 355,
+    "gs1": 22,
+    "gs2": 20,
+    "gs4": 10,
+    "essay": 8
+  },
+  "by_year": {
+    "2023": 355,
+    "2015": 58,
+    "2025": 2
+  },
+  "by_difficulty": {
+    "Easy": 414,
+    "Medium": 1
+  }
+}
