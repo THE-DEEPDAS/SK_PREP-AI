@@ -59,7 +59,7 @@ const DashboardApp = () => {
     { id: "mock", label: "Mock Tests", icon: Target },
     { id: "notebook", label: "Notebook", icon: Book },
     { id: "evaluator", label: "Evaluator", icon: FileText },
-    { id: "calendar", label: "Calendar", icon: BookOpen },
+    // { id: "calendar", label: "Calendar", icon: BookOpen },
     { id: "affairs", label: "Current Affairs", icon: Newspaper },
   ];
 
@@ -70,7 +70,7 @@ const DashboardApp = () => {
       case "mock": return <MockInterface darkMode={darkMode} />;
       case "notebook": return <NotebookInterface darkMode={darkMode} />;
       case "evaluator": return <EvaluatorInterface darkMode={darkMode} />;
-      case "calendar": return <CalendarInterface darkMode={darkMode} />;
+      // case "calendar": return <CalendarInterface darkMode={darkMode} />;
       case "affairs": return <AffairsInterface darkMode={darkMode} />;
       default: return <Dashboard darkMode={darkMode} quote={quote} />;
     }
@@ -1232,43 +1232,6 @@ const EvaluatorInterface = () => {
     </div>
   );
 };
-
-
-
-
-
-
-
-
-const CalendarInterface = ({ darkMode }) => {
-  const [events, setEvents] = useState([]);
-  const [event, setEvent] = useState({ title: '', date: '' });
-
-  return (
-    <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-2xl shadow-lg p-8 max-w-2xl mx-auto`}>
-      <h2 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'} mb-6`}>Calendar</h2>
-      <div className="grid grid-cols-2 gap-4 mb-4">
-        <input value={event.title} onChange={e => setEvent({...event, title: e.target.value})} placeholder="Event..." className={`px-4 py-3 ${darkMode ? 'bg-gray-700 text-white' : 'bg-gray-50'} border rounded-xl`} />
-        <input type="date" value={event.date} onChange={e => setEvent({...event, date: e.target.value})} className={`px-4 py-3 ${darkMode ? 'bg-gray-700 text-white' : 'bg-gray-50'} border rounded-xl`} />
-      </div>
-      <button onClick={() => { if(event.title && event.date) { setEvents([...events, {...event, id: Date.now()}]); setEvent({title:'', date:''}); }}} className="w-full py-3 bg-gradient-to-r from-blue-500 to-purple-500 text-white rounded-xl mb-6"><Plus className="w-5 h-5 inline mr-2" />Add</button>
-      <div className="space-y-3">
-        {events.map(e => (
-          <div key={e.id} className={`p-4 ${darkMode ? 'bg-gray-700' : 'bg-gray-50'} rounded-xl`}>
-            <h4 className={`font-semibold ${darkMode ? 'text-white' : 'text-gray-800'}`}>{e.title}</h4>
-            <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>{e.date}</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
-
-
-
-
-
 
 const API = "http://127.0.0.1:8000/api/current-affairs/articles";
 

@@ -158,7 +158,7 @@ Rules:
         else:
 
             res = requests.post(
-                "http://localhost:11434/api/generate",
+                "http://localhost:8000/api/generate",
                 json={
                     "model": "mistral",
                     "prompt": prompt,
